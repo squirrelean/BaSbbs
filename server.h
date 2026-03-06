@@ -2,6 +2,6 @@
 #define SERVER_H
 #include "read_config.h"
 
-int initialize_server(ServerConfig *config);
+int initialize_server();
 
 #endif
