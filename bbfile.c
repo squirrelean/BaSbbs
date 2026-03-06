@@ -1,12 +1,15 @@
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+
+#include "globals.h"
+#include "lock.h"
 
 long global_next_id = 0;
-static char global_bbfile_path[1024];
 
-int bb_init(const char *bbfile_path)
+int bb_init()
 {
-    FILE *fp = fopen(bbfile_path, "a+");
+    FILE *fp = fopen(global_config.bbfile, "a+");
     if (!fp)
         return -1;
 
@@ -14,15 +17,14 @@ int bb_init(const char *bbfile_path)
     char line[1024];
 
     while (fgets(line, sizeof(line), fp)) {
-        int current_id;
-        if (sscanf(line, "%d/", &current_id) == 1) {
+        long current_id;
+        if (sscanf(line, "%ld/", &current_id) == 1) {
             if (current_id > highest_id)
                 highest_id = current_id;
         }
     }
 
     global_next_id = highest_id + 1;
-    strncpy(global_bbfile_path, bbfile_path, sizeof(global_bbfile_path));
 
     fclose(fp);
     return 0;
@@ -30,9 +32,18 @@ int bb_init(const char *bbfile_path)
 
 int bb_write(const char *poster, const char *message)
 {
-    FILE *fp = fopen(global_bbfile_path, "a");
-    if (!fp)
+    write_lock();
+
+    if (global_config.fdebug) {
+        printf("Write debug 6s sleep\n");
+        sleep(6);
+    }
+
+    FILE *fp = fopen(global_config.bbfile, "a");
+    if (!fp) {
+        write_unlock();
         return -1;
+    }
 
     fprintf(fp, "%ld/%s/%s\n", global_next_id, poster, message);
     global_next_id++;
@@ -40,14 +51,28 @@ int bb_write(const char *poster, const char *message)
     fflush(fp);
     fclose(fp);
 
+    if (global_config.fdebug)
+        printf("Write debug End\n");
+
+    write_unlock();
+
     return global_next_id - 1;
 }
 
 int bb_read(const long message_number, char **message)
 {
-    FILE *fp = fopen(global_bbfile_path, "r");
-    if (!fp)
+    read_lock();
+
+    if (global_config.fdebug) {
+        printf("Read debug 3s sleep\n");
+        sleep(3);
+    }
+
+    FILE *fp = fopen(global_config.bbfile, "r");
+    if (!fp) {
+        read_unlock();
         return -1;
+    }
 
     *message = NULL;
 
@@ -64,6 +89,13 @@ int bb_read(const long message_number, char **message)
         }
     }
 
+    fclose(fp);
+
+    if (global_config.fdebug)
+        printf("Read debug end\n");
+
+    read_unlock();
+
     if (!*message)
         return -2;
     return 0;
@@ -71,13 +103,27 @@ int bb_read(const long message_number, char **message)
 
 int bb_replace(const char *username, const long message_number, const char *new_message)
 {
-    FILE *og_fp = fopen(global_bbfile_path, "r");
-    if (!og_fp)
-        return -1;
+    write_lock();
 
-    char temp_filename[strlen(global_bbfile_path) + 8];
-    snprintf(temp_filename, sizeof(temp_filename), "%s_tmp", global_bbfile_path);
+    if (global_config.fdebug) {
+        printf("Replace debug 6s sleep\n");
+        sleep(6);
+    }
+
+    FILE *og_fp = fopen(global_config.bbfile, "r");
+    if (!og_fp) {
+        write_unlock();
+        return -1;
+    }
+
+    char temp_filename[strlen(global_config.bbfile) + 8];
+    snprintf(temp_filename, sizeof(temp_filename), "%s_tmp", global_config.bbfile);
     FILE *temp_fp = fopen(temp_filename, "w");
+    if (!temp_fp) {
+        fclose(og_fp);
+        write_unlock();
+        return -1;
+    }
 
     char line[1024];
     char found_message = 0;
@@ -90,21 +136,26 @@ int bb_replace(const char *username, const long message_number, const char *new_
             fputs(line, temp_fp);
     }
 
-    fflush(og_fp);
     fflush(temp_fp);
     fclose(og_fp);
     fclose(temp_fp);
 
+    if (global_config.fdebug)
+        printf("Replace debug end\n");
+
     if (found_message) {
-        if (rename(temp_filename, global_bbfile_path) != 0) {
+        if (rename(temp_filename, global_config.bbfile) != 0) {
             perror("bb_replace: file rename failed");
             remove(temp_filename);
+            write_unlock();
             return -3;
         }
     } else {
         remove(temp_filename);
+        write_unlock();
         return -2;
     }
 
+    write_unlock();
     return 0;
 }
