@@ -5,7 +5,11 @@
 #include "bbfile.h"
 #include "server.h"
 
+#include "globals.h"
 #include "read_config.h"
+
+ServerConfig global_config;
+
 int main(int argc, char *argv[])
 {
     if (argc > 2) {
@@ -13,7 +17,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    ServerConfig config = {.thmax = 25, .thincr = 5, .bbport = 9000, .fdebug = false, .bbfile = NULL};
+    global_config = (ServerConfig){.thmax = 25, .thincr = 5, .bbport = 9000, .fdebug = false, .bbfile = NULL};
 
     char *config_path;
     if (argc == 2)
@@ -21,18 +25,18 @@ int main(int argc, char *argv[])
     else
         config_path = "bbserv.conf";
 
-    read_config_file(&config, config_path);
-    if (!config.bbfile) {
+    read_config_file(&global_config, config_path);
+    if (!global_config.bbfile) {
         printf("BBFILE required\n");
         exit(EXIT_FAILURE);
     }
 
-    printf("thmax: %d, thincr: %d, bbport: %d, fdebug: %d, bbfile: %s\n", config.thmax, config.thincr,
-           config.bbport, config.fdebug, config.bbfile);
+    printf("thmax: %d, thincr: %d, bbport: %d, fdebug: %d, bbfile: %s\n", global_config.thmax,
+           global_config.thincr, global_config.bbport, global_config.fdebug, global_config.bbfile);
 
-    bb_init(config.bbfile);
+    bb_init();
 
-    initialize_server(&config);
+    initialize_server();
 
-    free(config.bbfile);
+    free(global_config.bbfile);
 }
