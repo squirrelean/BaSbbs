@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "bbfile.h"
 #include "server.h"
 
 #include "read_config.h"
@@ -26,8 +27,10 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    printf("thmax: %d, thincr: %d, bbport: %d, fdebug: %d, bbfile: %s", config.thmax, config.thincr,
+    printf("thmax: %d, thincr: %d, bbport: %d, fdebug: %d, bbfile: %s\n", config.thmax, config.thincr,
            config.bbport, config.fdebug, config.bbfile);
+
+    bb_init(config.bbfile);
 
     initialize_server(&config);
 
