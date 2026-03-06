@@ -1,19 +1,20 @@
-#include <stdio.h>
-#include <stdbool.h>
 #include <netinet/in.h>
+#include <stdbool.h>
+#include <stdio.h>
 
+#include "globals.h"
+#include "protocol.h"
 #include "read_config.h"
 #include "tcp_utils.h"
-#include "protocol.h"
 
-int initialize_server(ServerConfig *config)
+int initialize_server()
 {
     int master_sock, slave_sock;
 
-    master_sock = create_listen_socket(config->bbport, 35);
+    master_sock = create_listen_socket(global_config.bbport, 35);
     if (master_sock == -1)
         return -1;
-    printf("Server listening on port: %d\n", config->bbport);
+    printf("Server listening on port: %d\n", global_config.bbport);
 
     struct sockaddr_in client_addr;
     unsigned int client_addr_len = sizeof(client_addr);
@@ -28,5 +29,4 @@ int initialize_server(ServerConfig *config)
         // handle the client
         handle_client(slave_sock);
     }
-
 }
