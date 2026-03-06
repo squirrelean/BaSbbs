@@ -1,5 +1,5 @@
-#include <stdio.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -57,7 +57,7 @@ int read_line(const int fd, char *buffer, const size_t maxlen)
 
         buffer[i++] = ch;
     }
-    buffer[i + 1] = '\0';
+    buffer[i] = '\0';
 
     return i;
 }
