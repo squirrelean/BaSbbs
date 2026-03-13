@@ -73,7 +73,6 @@ void user_command(int client_fd, char *buffer, char *username, int user_len)
 
     strncpy(username, entered_name, user_len - 1);
     username[user_len - 1] = '\0';
-    printf("user_command: username: %s\n", username);
 
     snprintf(msg, sizeof(msg), "1.0 HELLO %s greetings\n", username);
     write(client_fd, msg, strlen(msg));
