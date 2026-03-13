@@ -1,32 +1,107 @@
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "globals.h"
 #include "protocol.h"
 #include "read_config.h"
 #include "tcp_utils.h"
 
-int initialize_server()
-{
-    int master_sock, slave_sock;
+void create_threads(int master_sock);
+void *monitor_thread();
 
-    master_sock = create_listen_socket(global_config.bbport, 35);
+struct monitor_t {
+    pthread_mutex_t mutex;
+    unsigned int total_threads;
+    unsigned int active_threads;
+    unsigned int idle_t_to_reap;
+};
+
+struct monitor_t mon = {PTHREAD_MUTEX_INITIALIZER, 0, 0, 0};
+
+void initialize_server()
+{
+    int master_sock = create_listen_socket(global_config.bbport, 32);
     if (master_sock == -1)
-        return -1;
+        return;
     printf("Server listening on port: %d\n", global_config.bbport);
+
+    // Preallocate Tincr threads on startup
+    pthread_mutex_lock(&mon.mutex);
+    create_threads(master_sock);
+    pthread_mutex_unlock(&mon.mutex);
+
+    monitor_thread();
+
+    return;
+}
+
+void *run_client(void *arg)
+{
+    int master_sock = (int)(long)(arg);
+    int slave_sock;
 
     struct sockaddr_in client_addr;
     unsigned int client_addr_len = sizeof(client_addr);
 
     while (true) {
+        pthread_mutex_lock(&mon.mutex);
+        if (mon.idle_t_to_reap > 0) {
+            mon.total_threads--;
+            mon.idle_t_to_reap--;
+            pthread_mutex_unlock(&mon.mutex);
+            return NULL;
+        }
+        pthread_mutex_unlock(&mon.mutex);
+
         slave_sock = accept(master_sock, (struct sockaddr *)&client_addr, &client_addr_len);
         if (slave_sock < 0) {
             perror("slave accept failure");
             continue;
         }
 
-        // handle the client
+        pthread_mutex_lock(&mon.mutex);
+        mon.active_threads++;
+        if (mon.active_threads == mon.total_threads && mon.total_threads < global_config.thmax)
+            create_threads(master_sock);
+        pthread_mutex_unlock(&mon.mutex);
+
         handle_client(slave_sock);
+        close(slave_sock);
+
+        pthread_mutex_lock(&mon.mutex);
+        mon.active_threads--;
+        pthread_mutex_unlock(&mon.mutex);
+    }
+}
+
+void *monitor_thread()
+{
+    const int wakeup_interval = 20;
+
+    while (true) {
+        sleep(wakeup_interval);
+
+        pthread_mutex_lock(&mon.mutex);
+        if (mon.total_threads > global_config.thincr &&
+            mon.active_threads < (mon.total_threads - global_config.thincr - 1)) {
+            mon.idle_t_to_reap = global_config.thincr;
+        }
+        pthread_mutex_unlock(&mon.mutex);
+    }
+}
+
+void create_threads(int master_sock)
+{
+    pthread_t t_id;
+    pthread_attr_t t_attr;
+    pthread_attr_init(&t_attr);
+    pthread_attr_setdetachstate(&t_attr, PTHREAD_CREATE_DETACHED);
+
+    for (int i = 0; i < global_config.thincr; i++) {
+        if (pthread_create(&t_id, &t_attr, run_client, (void *)(long)master_sock) == 0)
+            mon.total_threads++;
     }
 }
