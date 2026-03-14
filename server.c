@@ -1,22 +1,22 @@
-#include <netinet/in.h>
-#include <pthread.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <unistd.h>
-
 #include "globals.h"
 #include "protocol.h"
 #include "read_config.h"
 #include "tcp_utils.h"
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <unistd.h>
 
 void create_threads(int master_sock);
 void *monitor_thread();
 
 struct monitor_t {
     pthread_mutex_t mutex;
-    unsigned int total_threads;
-    unsigned int active_threads;
-    unsigned int idle_t_to_reap;
+    int total_threads;
+    int active_threads;
+    int idle_t_to_reap;
 };
 
 struct monitor_t mon = {PTHREAD_MUTEX_INITIALIZER, 0, 0, 0};
@@ -46,6 +46,8 @@ void *run_client(void *arg)
     struct sockaddr_in client_addr;
     unsigned int client_addr_len = sizeof(client_addr);
 
+    struct pollfd pol;
+
     while (true) {
         pthread_mutex_lock(&mon.mutex);
         if (mon.idle_t_to_reap > 0) {
@@ -56,6 +58,13 @@ void *run_client(void *arg)
         }
         pthread_mutex_unlock(&mon.mutex);
 
+        // Prevent master_sock from blocking on accept.
+        pol.fd = master_sock;
+        pol.events = POLLIN;
+        int timeout = poll(&pol, 1, 2000);
+        if (timeout <= 0)
+            continue;
+
         slave_sock = accept(master_sock, (struct sockaddr *)&client_addr, &client_addr_len);
         if (slave_sock < 0) {
             perror("slave accept failure");
@@ -64,7 +73,7 @@ void *run_client(void *arg)
 
         pthread_mutex_lock(&mon.mutex);
         mon.active_threads++;
-        if (mon.active_threads == mon.total_threads && mon.total_threads < global_config.thmax)
+        if (mon.active_threads == mon.total_threads && mon.total_threads <= global_config.thmax)
             create_threads(master_sock);
         pthread_mutex_unlock(&mon.mutex);
 
