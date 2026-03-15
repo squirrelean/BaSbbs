@@ -8,6 +8,21 @@ danastasio02@icloud.com, DANASTASIO25@ubishops.ca
 BaSbbs is a concurrent, multithreaded bulletin board server that provides users with a series of protocols for interacting with 
 the bulletin board file.
 
+When the server starts, it reads the provided configuration file into a global struct, reads through the bbfile to obtain the 
+highest message id, then begins handling clients. 
+
+protocol.c is responsible for handing the specified application protocol and utilizes bbfile.c to carry out any required file 
+manipulations. As a security feature, protocol.c implements 4kb buffers and truncates any provided input in the event of overflow.
+
+bbfile.c ensures two threads do not write to the file at the same time, read while another is writing by utilizing the readers-writers 
+paradigm defined in lock.c.
+
+server.c handles accepting connections to clients, allocating and deallocating threads, and implementing concurrency using those threads.
+The preallocation portion of this file was inspired by the code provided in mtpserv but differs where it uses the main process as a monitor 
+instead of spawning a new dedicated monitor thread. Furthermore, in order to support the destruction of idle threads, a poll was introduced 
+with a delay of two seconds to ensure idle threads do not remain blocked at accept, allowing them to be reaped by quickly instead of having 
+to wait for additional clients to connect. In hindsight, using a queue to hold sockets may have been a more elegant solution, albeit slightly 
+more complex.
 
 
 -- Test Suite Follows --
