@@ -1,11 +1,33 @@
+Daniel James A. Carone
+danastasio02@icloud.com, DANASTASIO25@ubishops.ca
+002-36-3171
+
+
+-- Description --
+
+BaSbbs is a concurrent, multithreaded bulletin board server that provides users with a series of protocols for interacting with 
+the bulletin board file.
+
 
 
 -- Test Suite Follows --
+
+Configuration:
+The server prints the config variables to terminal on startup.
+
+- The program correctly parses the provided config file values when provided in either the cwd or cli.
+
+- The server does not accept a missing bbfile value but will create a bbfile using the name provided in the config in 
+  the event such file does not exist.
+
+- The program uses the default values in the event the optional variables are not in the config.
+
 
 Application Protocol:
 
 Client Handling
   - Upon connecting to the server through telnet localhost, the server sends the correct connection message.
+  - When no USER name is provided, the client defaults to Anonymous Coward.
 
 USER connection
   - "USER" -> server sends "Usage: USER name".
@@ -43,6 +65,9 @@ terminal.
   when another thread is writing to the file.
 
 - When two READ operations occur between threads, both finish at the same time, proving multiple read operations can occur on the file simultaneously.
+
+- When a new, clean bbfile is provided, the first WRITE occurs at ID 1. When the previous bbfile is introduced back on restart, the ID begins from 
+  that files specific highest ID.
 
 
 Multithreading:
