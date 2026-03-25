@@ -3,5 +3,6 @@
 #include "read_config.h"
 
 extern ServerConfig global_config;
+extern ReplicationConfig global_rconfig;
 
 #endif
