@@ -8,6 +8,7 @@ bool parse_bool_flag(char *value);
 void create_peer(EndPoint *peer, char *value);
 void append_peer(EndPoint **peers, EndPoint peer, int *size, int index);
 void free_peers(EndPoint *peers, int peer_count);
+char *parse_path(char *value);
 
 void read_config_file(ServerConfig *config, ReplicationConfig *rconfig, char *config_path)
 {
@@ -40,7 +41,7 @@ void read_config_file(ServerConfig *config, ReplicationConfig *rconfig, char *co
                     free(config->bbfile);
                     config->bbfile = NULL;
                 }
-                config->bbfile = strdup(value);
+                config->bbfile = parse_path(value);
             } else if (!strcmp(key, "FOREGROUND"))
                 rconfig->fground = parse_bool_flag(value);
             else if (!strcmp(key, "PDEBUG"))
@@ -71,6 +72,19 @@ bool parse_bool_flag(char *value)
         return true;
 
     return false;
+}
+
+char *parse_path(char *value)
+{
+    char path[256];
+
+    char *ptr = realpath(value, path);
+    if (!ptr) {
+        perror("failed to handle bbfile absolue path");
+        return NULL;
+    }
+
+    return strdup(path);
 }
 
 void create_peer(EndPoint *peer, char *value)
