@@ -2,6 +2,8 @@
 #include "protocol.h"
 #include "read_config.h"
 #include "tcp_utils.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
@@ -26,6 +28,11 @@ void initialize_server()
     int master_sock = create_listen_socket(global_config.bbport, 32);
     if (master_sock == -1)
         return;
+
+    // Makes the master socket non blocking on accept.
+    int flags = fcntl(master_sock, F_GETFL, 0);
+    fcntl(master_sock, F_SETFL, flags | O_NONBLOCK);
+
     printf("Server listening on port: %d\n", global_config.bbport);
 
     // Preallocate Tincr threads on startup
@@ -42,8 +49,6 @@ void initialize_server()
             pthread_mutex_unlock(&mon.mutex);
             break;
         }
-        printf("waiting for all threads to exit. total threads: %d, active threads: %d\n", mon.total_threads,
-               mon.active_threads);
         pthread_mutex_unlock(&mon.mutex);
 
         sleep(1);
@@ -51,12 +56,15 @@ void initialize_server()
 
     close(master_sock);
 
+    mon.active_threads = 0;
+    mon.idle_t_to_reap = 0;
+    mon.total_threads = 0;
+
     return;
 }
 
 void *run_client(void *arg)
 {
-    printf("DEBUG: Thread %lu starting\n", (unsigned long)pthread_self());
     int master_sock = (int)(long)(arg);
     int slave_sock;
 
@@ -78,15 +86,14 @@ void *run_client(void *arg)
         // Prevent master_sock from blocking on accept.
         pol.fd = master_sock;
         pol.events = POLLIN;
-        printf("DEBUG: Thread %lu entering poll\n", (unsigned long)pthread_self());
         int timeout = poll(&pol, 1, 2000);
-        printf("DEBUG: Thread %lu exited poll with code %d\n", (unsigned long)pthread_self(), timeout);
         if (timeout <= 0)
             continue;
 
         slave_sock = accept(master_sock, (struct sockaddr *)&client_addr, &client_addr_len);
-        printf("DEBUG: Thread %lu exited accept\n", (unsigned long)pthread_self());
         if (slave_sock < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
             perror("slave accept failure");
             continue;
         }
@@ -98,7 +105,6 @@ void *run_client(void *arg)
         pthread_mutex_unlock(&mon.mutex);
 
         handle_client(slave_sock);
-        printf("client exited\n");
         close(slave_sock);
 
         pthread_mutex_lock(&mon.mutex);
@@ -110,8 +116,6 @@ void *run_client(void *arg)
     mon.total_threads--;
     pthread_mutex_unlock(&mon.mutex);
 
-    printf("DEBUG: Thread %lu exiting loop, total_threads is now %d\n", (unsigned long)pthread_self(),
-           mon.total_threads);
     return NULL;
 }
 
