@@ -35,11 +35,28 @@ void initialize_server()
 
     monitor_thread();
 
+    // wait for all threads to terminate before restarting
+    while (true) {
+        pthread_mutex_lock(&mon.mutex);
+        if (mon.total_threads == 0) {
+            pthread_mutex_unlock(&mon.mutex);
+            break;
+        }
+        printf("waiting for all threads to exit. total threads: %d, active threads: %d\n", mon.total_threads,
+               mon.active_threads);
+        pthread_mutex_unlock(&mon.mutex);
+
+        sleep(1);
+    }
+
+    close(master_sock);
+
     return;
 }
 
 void *run_client(void *arg)
 {
+    printf("DEBUG: Thread %lu starting\n", (unsigned long)pthread_self());
     int master_sock = (int)(long)(arg);
     int slave_sock;
 
@@ -48,24 +65,27 @@ void *run_client(void *arg)
 
     struct pollfd pol;
 
-    while (true) {
+    while (!global_terminate_server && !global_restart_server) {
         pthread_mutex_lock(&mon.mutex);
-        if (mon.idle_t_to_reap > 0) {
-            mon.total_threads--;
+        if (mon.idle_t_to_reap > 0 && !global_terminate_server) {
+            // mon.total_threads--;
             mon.idle_t_to_reap--;
             pthread_mutex_unlock(&mon.mutex);
-            return NULL;
+            break;
         }
         pthread_mutex_unlock(&mon.mutex);
 
         // Prevent master_sock from blocking on accept.
         pol.fd = master_sock;
         pol.events = POLLIN;
+        printf("DEBUG: Thread %lu entering poll\n", (unsigned long)pthread_self());
         int timeout = poll(&pol, 1, 2000);
+        printf("DEBUG: Thread %lu exited poll with code %d\n", (unsigned long)pthread_self(), timeout);
         if (timeout <= 0)
             continue;
 
         slave_sock = accept(master_sock, (struct sockaddr *)&client_addr, &client_addr_len);
+        printf("DEBUG: Thread %lu exited accept\n", (unsigned long)pthread_self());
         if (slave_sock < 0) {
             perror("slave accept failure");
             continue;
@@ -78,19 +98,28 @@ void *run_client(void *arg)
         pthread_mutex_unlock(&mon.mutex);
 
         handle_client(slave_sock);
+        printf("client exited\n");
         close(slave_sock);
 
         pthread_mutex_lock(&mon.mutex);
         mon.active_threads--;
         pthread_mutex_unlock(&mon.mutex);
     }
+
+    pthread_mutex_lock(&mon.mutex);
+    mon.total_threads--;
+    pthread_mutex_unlock(&mon.mutex);
+
+    printf("DEBUG: Thread %lu exiting loop, total_threads is now %d\n", (unsigned long)pthread_self(),
+           mon.total_threads);
+    return NULL;
 }
 
 void *monitor_thread()
 {
     const int wakeup_interval = 20;
 
-    while (true) {
+    while (!global_restart_server && !global_terminate_server) {
         sleep(wakeup_interval);
 
         pthread_mutex_lock(&mon.mutex);
@@ -100,6 +129,8 @@ void *monitor_thread()
         }
         pthread_mutex_unlock(&mon.mutex);
     }
+
+    return NULL;
 }
 
 void create_threads(int master_sock)
