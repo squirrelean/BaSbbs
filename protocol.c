@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "bbfile.h"
+#include "globals.h"
 #include "tcp_utils.h"
 
 void send_welcome_msg(int client_fd);
@@ -20,7 +21,7 @@ void handle_client(int client_fd)
 
     send_welcome_msg(client_fd);
 
-    while (1) {
+    while (!global_restart_server && !global_terminate_server) {
         int bytes_read = read_line(client_fd, buffer, sizeof(buffer));
         if (bytes_read <= 0)
             break;
