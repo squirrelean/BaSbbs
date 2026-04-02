@@ -1,8 +1,11 @@
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "globals.h"
 
 int create_listen_socket(int port, int backlog)
 {
@@ -44,7 +47,19 @@ int read_line(const int fd, char *buffer, const size_t maxlen)
     char ch;
     size_t n;
 
+    struct pollfd pol;
+    pol.fd = fd;
+    pol.events = POLLIN;
+
     while (i < maxlen - 1) {
+        if (global_restart_server || global_terminate_server)
+            return -1;
+
+        int timeout = poll(&pol, 1, 2000);
+        if (timeout <= 0) {
+            continue;
+        }
+
         n = recv(fd, &ch, 1, 0);
         if (n <= 0)
             return n;

@@ -2,6 +2,8 @@
 #include "protocol.h"
 #include "read_config.h"
 #include "tcp_utils.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
@@ -26,6 +28,11 @@ void initialize_server()
     int master_sock = create_listen_socket(global_config.bbport, 32);
     if (master_sock == -1)
         return;
+
+    // Makes the master socket non blocking on accept.
+    int flags = fcntl(master_sock, F_GETFL, 0);
+    fcntl(master_sock, F_SETFL, flags | O_NONBLOCK);
+
     printf("Server listening on port: %d\n", global_config.bbport);
 
     // Preallocate Tincr threads on startup
@@ -34,6 +41,24 @@ void initialize_server()
     pthread_mutex_unlock(&mon.mutex);
 
     monitor_thread();
+
+    // wait for all threads to terminate before restarting
+    while (true) {
+        pthread_mutex_lock(&mon.mutex);
+        if (mon.total_threads == 0) {
+            pthread_mutex_unlock(&mon.mutex);
+            break;
+        }
+        pthread_mutex_unlock(&mon.mutex);
+
+        sleep(1);
+    }
+
+    close(master_sock);
+
+    mon.active_threads = 0;
+    mon.idle_t_to_reap = 0;
+    mon.total_threads = 0;
 
     return;
 }
@@ -48,13 +73,13 @@ void *run_client(void *arg)
 
     struct pollfd pol;
 
-    while (true) {
+    while (!global_terminate_server && !global_restart_server) {
         pthread_mutex_lock(&mon.mutex);
-        if (mon.idle_t_to_reap > 0) {
-            mon.total_threads--;
+        if (mon.idle_t_to_reap > 0 && !global_terminate_server) {
+            // mon.total_threads--;
             mon.idle_t_to_reap--;
             pthread_mutex_unlock(&mon.mutex);
-            return NULL;
+            break;
         }
         pthread_mutex_unlock(&mon.mutex);
 
@@ -67,6 +92,8 @@ void *run_client(void *arg)
 
         slave_sock = accept(master_sock, (struct sockaddr *)&client_addr, &client_addr_len);
         if (slave_sock < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
             perror("slave accept failure");
             continue;
         }
@@ -84,13 +111,19 @@ void *run_client(void *arg)
         mon.active_threads--;
         pthread_mutex_unlock(&mon.mutex);
     }
+
+    pthread_mutex_lock(&mon.mutex);
+    mon.total_threads--;
+    pthread_mutex_unlock(&mon.mutex);
+
+    return NULL;
 }
 
 void *monitor_thread()
 {
     const int wakeup_interval = 20;
 
-    while (true) {
+    while (!global_restart_server && !global_terminate_server) {
         sleep(wakeup_interval);
 
         pthread_mutex_lock(&mon.mutex);
@@ -100,6 +133,8 @@ void *monitor_thread()
         }
         pthread_mutex_unlock(&mon.mutex);
     }
+
+    return NULL;
 }
 
 void create_threads(int master_sock)

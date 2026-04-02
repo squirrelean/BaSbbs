@@ -8,12 +8,14 @@
 #include "daemonize.h"
 #include "globals.h"
 #include "read_config.h"
+#include "signal.h"
 
 ServerConfig global_config;
 ReplicationConfig global_rconfig;
 
 void print_config();
 void free_allocated_memory();
+void set_config_defaults();
 
 int main(int argc, char *argv[])
 {
@@ -22,8 +24,9 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    global_config = (ServerConfig){.thmax = 25, .thincr = 5, .bbport = 9000, .fdebug = false, .bbfile = NULL};
-    global_rconfig = (ReplicationConfig){.fground = 0, .pdebug = 0, .rport = 9001, .peer = NULL};
+    initialize_signals();
+
+    set_config_defaults();
 
     char *config_path;
     if (argc == 2)
@@ -37,11 +40,13 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    print_config();
+    if (!global_rconfig.fground) {
+        if (daemonize() < 0) {
+            free_allocated_memory();
+            exit(EXIT_FAILURE);
+        }
 
-    if (daemonize() < 0) {
-        free_allocated_memory();
-        exit(EXIT_FAILURE);
+        printf("Server running daemonized\n");
     }
 
     const char *pidfile = "bbserv.pid_file";
@@ -54,12 +59,24 @@ int main(int argc, char *argv[])
         }
     }
 
-    bb_init();
+    while (!global_terminate_server) {
+        global_restart_server = 0;
 
-    initialize_server();
+        read_config_file(&global_config, &global_rconfig, config_path);
+
+        print_config();
+
+        bb_init();
+
+        initialize_server();
+        if (global_restart_server)
+            printf("SIGHUP signal handled. reconfiguring server\n\n");
+    }
 
     if (!global_rconfig.fground)
         release_pid_file(pidfile, pidfd);
+
+    printf("termination signal handled. terminating server\n");
 }
 
 void print_config()
@@ -78,4 +95,10 @@ void free_allocated_memory()
 {
     free(global_config.bbfile);
     free_peers(global_rconfig.peer, global_rconfig.peer_count);
+}
+
+void set_config_defaults()
+{
+    global_config = (ServerConfig){.thmax = 25, .thincr = 5, .bbport = 9000, .fdebug = false, .bbfile = NULL};
+    global_rconfig = (ReplicationConfig){.fground = 0, .pdebug = 0, .rport = 9001, .peer = NULL};
 }
