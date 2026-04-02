@@ -40,9 +40,13 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    if (daemonize() < 0) {
-        free_allocated_memory();
-        exit(EXIT_FAILURE);
+    if (!global_rconfig.fground) {
+        if (daemonize() < 0) {
+            free_allocated_memory();
+            exit(EXIT_FAILURE);
+        }
+
+        printf("Server running daemonized\n");
     }
 
     const char *pidfile = "bbserv.pid_file";
