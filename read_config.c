@@ -41,7 +41,7 @@ void read_config_file(ServerConfig *config, ReplicationConfig *rconfig, char *co
                     free(config->bbfile);
                     config->bbfile = NULL;
                 }
-                config->bbfile = parse_path(value);
+                config->bbfile = strdup(value);
             } else if (!strcmp(key, "FOREGROUND"))
                 rconfig->fground = parse_bool_flag(value);
             else if (!strcmp(key, "PDEBUG"))
@@ -72,19 +72,6 @@ bool parse_bool_flag(char *value)
         return true;
 
     return false;
-}
-
-char *parse_path(char *value)
-{
-    char path[256];
-
-    char *ptr = realpath(value, path);
-    if (!ptr) {
-        perror("failed to handle bbfile absolue path");
-        return NULL;
-    }
-
-    return strdup(path);
 }
 
 void create_peer(EndPoint *peer, char *value)
