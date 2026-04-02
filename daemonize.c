@@ -6,15 +6,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "globals.h"
-
 int daemonize()
 {
-    if (global_rconfig.fground) {
-        printf("daemonize: server running in foreground\n");
-        return 0;
-    }
-
     pid_t bgpid = fork();
     if (bgpid < 0) {
         perror("daemonization fork");
