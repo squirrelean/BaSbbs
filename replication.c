@@ -1,6 +1,5 @@
 #include <netinet/in.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -10,58 +9,38 @@
 #include "tcp_utils.h"
 
 int connect_to_peers(struct sockaddr_in sin[], int socks[]);
+int phase_init(const int sd[], const char *bmsg, const char *pos_msg, const char *neg_msg);
 void broadcast_to_peers(const int sd[], const char *message);
 int await_response(const int sd[], const char *status);
 void close_socks(int sd[]);
 
-int replica_master_init(long msg_num, const char *username, const char *msg, char op)
+int replica_master_init(int socks[], const char *pcol_msg)
 {
     struct sockaddr_in peers[global_rconfig.peer_count];
-    int socks[global_rconfig.peer_count];
-    memset(socks, -1, sizeof(socks));
 
     if (connect_to_peers(peers, socks) < 0)
         return -1;
 
     // Precommit phase
-    broadcast_to_peers(socks, "PRECOM SYN\n");
-    if (await_response(socks, "ACK\n") < 0) {
-        broadcast_to_peers(socks, "ABRT\n");
-        close_socks(socks);
+    if (phase_init(socks, "PRECOM SYN\n", "ACK\n", "ABRT\n") < 0) {
         return -1;
     }
 
     // Commit phase
-    char buffer[5120];
-    snprintf(buffer, sizeof(buffer), "COM %ld %ld %s %s\n", global_next_id, msg_num, username, msg);
-
-    broadcast_to_peers(socks, buffer);
-    if (await_response(socks, "ACK\n") < 0) {
-        broadcast_to_peers(socks, "NAK\n");
-        close_socks(socks);
+    if (phase_init(socks, pcol_msg, "ACK\n", "NAK\n") < 0) {
         return -1;
     }
 
-    long op_status = -1;
-    switch (op) {
-    case 'w':
-        op_status = bb_write(username, msg + 6);
-        break;
-    case 'r':
-        op_status = bb_replace(username, msg_num, msg + 8);
-        break;
-    }
+    return 0;
+}
 
-    if (op_status < 0) {
-        broadcast_to_peers(socks, "NOK\n");
-        close_socks(socks);
+int phase_init(const int sd[], const char *bmsg, const char *pos_msg, const char *neg_msg)
+{
+    broadcast_to_peers(sd, bmsg);
+    if (await_response(sd, pos_msg) < 0) {
+        broadcast_to_peers(sd, neg_msg);
         return -1;
     }
-
-    broadcast_to_peers(socks, "OK\n");
-
-    close_socks(socks);
-
     return 0;
 }
 
@@ -70,31 +49,31 @@ void replica_slave_init(int peer_sd)
     char buffer[5120];
     long next_id = -1;
     long msg_num = -1;
-    char username[65];
-    char message[4097];
+    char username[128];
+    char operation[32];
+    char message[5120];
+
+    long write_offset = get_bbfile_offset();
 
     while (read_line(peer_sd, buffer, sizeof(buffer)) > 0) {
-        if (!strncmp(buffer, "PRECOM SYN", sizeof("PRECOM SYN")))
+        if (!strncmp(buffer, "PRECOM SYN", 10))
             send(peer_sd, "ACK\n", sizeof("ACK\n"), 0);
 
-        else if (!strncmp(buffer, "ABRT", sizeof("ABRT")) || !strncmp(buffer, "OK", sizeof("OK")))
+        else if (!strncmp(buffer, "ABRT", 4) || !strncmp(buffer, "OK", 2))
             break;
 
-        else if (!strncmp(buffer, "COM", sizeof("COM"))) {
-            sscanf(buffer, "COM %ld %ld %64s %4096s", &next_id, &msg_num, username, message);
-            if (next_id < 0) {
-                send(peer_sd, "NAK\n", sizeof("NAK\n"), 0);
-                break;
-            }
+        else if (!strncmp(buffer, "COM", 3)) {
+            sscanf(buffer, "COM %s %ld %64s %ld %4096[^\n]", operation, &next_id, username, &msg_num,
+                   message);
 
             global_next_id = next_id;
 
             int op_status = -1;
-            if (!strncmp(message, "WRITE", sizeof("WRITE")))
-                op_status = bb_write(username, message + 6);
+            if (!strncmp(operation, "WRITE", 4))
+                op_status = bb_write(username, message);
 
-            else if (!strncmp(message, "REPLACE", sizeof("REPLACE")) && msg_num > 0)
-                op_status = bb_replace(username, msg_num, message + 8);
+            else if (!strncmp(operation, "REPLACE", 8) && msg_num > 0)
+                op_status = bb_replace(username, msg_num, message);
 
             if (op_status < 0)
                 send(peer_sd, "NAK\n", sizeof("NAK\n"), 0);
@@ -102,8 +81,10 @@ void replica_slave_init(int peer_sd)
                 send(peer_sd, "ACK\n", sizeof("ACK\n"), 0);
         }
 
-        // else if (!strncmp(buffer, "NOK\n", sizeof("NOK\n")))
-        //  rollback WRITE/REPLACE
+        else if (!strncmp(buffer, "NOK", 3)) {
+            // truncate(global_config.bbfile, write_offset);
+            // decrement the bbfile id
+        }
     }
     close(peer_sd);
 }
@@ -149,23 +130,15 @@ void broadcast_to_peers(const int sd[], const char *message)
 
 int await_response(const int sd[], const char *status)
 {
-    const int timeout = 2000;
-    char *peer_response = NULL;
-
+    char buffer[1024];
     for (int i = 0; i < global_rconfig.peer_count; i++) {
-        peer_response = read_from_server(sd[i], timeout);
-        if (!peer_response)
+        int bytes_read = read_line(sd[i], buffer, sizeof(buffer));
+        if (bytes_read <= 0)
             return -1;
 
-        int match = strcmp(peer_response, status);
-
-        free(peer_response);
-
-        if (match != 0)
+        if (strncmp(buffer, status, strlen(status)) != 0)
             return -1;
     }
-
-    free(peer_response);
 
     return 0;
 }
