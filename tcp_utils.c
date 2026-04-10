@@ -1,8 +1,10 @@
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "globals.h"
@@ -75,4 +77,58 @@ int read_line(const int fd, char *buffer, const size_t maxlen)
     buffer[i] = '\0';
 
     return i;
+}
+
+int get_connection_info(const char *rhost, int rport, struct sockaddr_in *sin)
+{
+    struct hostent *hinfo;
+    hinfo = gethostbyname(rhost);
+    if (!hinfo) {
+        herror("gethostbyname");
+        return -1;
+    }
+
+    memset(sin, 0, sizeof(struct sockaddr_in));
+    sin->sin_family = AF_INET;
+    sin->sin_port = (unsigned short)htons(rport);
+
+    memcpy(&sin->sin_addr, hinfo->h_addr, hinfo->h_length);
+
+    return 0;
+}
+
+int connect_to_server(struct sockaddr_in *sin, int *sd)
+{
+    if (*sd != -1)
+        return 0;
+
+    *sd = socket(AF_INET, SOCK_STREAM, 0);
+    int rc = connect(*sd, (struct sockaddr *)sin, sizeof(*sin));
+    if (rc < 0) {
+        perror("tcp_utils: failed to connect to peer server");
+        close(*sd);
+        return -1;
+    }
+
+    return 0;
+}
+
+char *read_from_server(int sd, int timeout)
+{
+    struct pollfd pollrec;
+    pollrec.fd = sd;
+    pollrec.events = POLLIN;
+
+    char buffer[1024];
+    int bytes_read = 0;
+
+    poll(&pollrec, 1, timeout);
+    bytes_read = recv(sd, buffer, sizeof(buffer) - 1, 0);
+    if (bytes_read > 0) {
+        buffer[bytes_read] = '\0';
+    }
+
+    if (bytes_read <= 0)
+        return NULL;
+    return strdup(buffer);
 }
