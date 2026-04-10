@@ -7,7 +7,7 @@ PRECOM <SYN/ABRT>
     and send an ERROR message to the client. The peers will then abandon the rest of the process and resume to their normal behavior.
 - If all peers respond with ACK messages, the commit phase begins.
 
-COM <next message id> <WRITE/REPLACE> <message>
+COM <WRITE/REPLACE> <next message id> <username> <replace message id> <message>
 - The master broadcasts a commit message containing the operation to perform and message to all its peers.
 - Each peer will then attempt to perform the operation on the bbfile. The peer will reply to the master with an ACK  if the operation was successful
     or a NACK if it could not perform the operation.
