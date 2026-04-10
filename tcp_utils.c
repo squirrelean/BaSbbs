@@ -112,23 +112,3 @@ int connect_to_server(struct sockaddr_in *sin, int *sd)
 
     return 0;
 }
-
-char *read_from_server(int sd, int timeout)
-{
-    struct pollfd pollrec;
-    pollrec.fd = sd;
-    pollrec.events = POLLIN;
-
-    char buffer[1024];
-    int bytes_read = 0;
-
-    poll(&pollrec, 1, timeout);
-    bytes_read = recv(sd, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_read > 0) {
-        buffer[bytes_read] = '\0';
-    }
-
-    if (bytes_read <= 0)
-        return NULL;
-    return strdup(buffer);
-}
