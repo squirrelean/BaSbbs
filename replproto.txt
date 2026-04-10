@@ -1,0 +1,16 @@
+- Application Protocol -
+
+PRECOM <SYN/ABRT>
+- The master will begin by sending a PRECOM packet to all of its peers and wait for a response.
+- Each peer will then reply with an ACK message if they are available.
+- If the master does not receive an ACK from a peer in over 5 seconds, it will broadcast an ABRT message to all the peers, abort its local operation,
+    and send an ERROR message to the client. The peers will then abandon the rest of the process and resume to their normal behavior.
+- If all peers respond with ACK messages, the commit phase begins.
+
+COM <next message id> <WRITE/REPLACE> <message>
+- The master broadcasts a commit message containing the operation to perform and message to all its peers.
+- Each peer will then attempt to perform the operation on the bbfile. The peer will reply to the master with an ACK  if the operation was successful
+    or a NACK if it could not perform the operation.
+- The master will wait for all peers to reply with their operation status. If all peers sucessfully performed the operation, the master will then perform
+    the operation locally and broadcast OK if it was successful.
+- If theres a NAK from any peer or the master's local operation was unsuccessful, the master will broadcast NOK, causing all peers to roll back their change.
