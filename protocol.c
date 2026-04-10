@@ -5,6 +5,7 @@
 
 #include "bbfile.h"
 #include "globals.h"
+#include "replication.h"
 #include "tcp_utils.h"
 
 void send_welcome_msg(int client_fd);
@@ -82,15 +83,32 @@ void user_command(int client_fd, char *buffer, char *username, int user_len)
 void write_command(int client_fd, char *buffer, char *username)
 {
     char msg[1024];
-    long message_number;
+    long message_number = -1;
+    int socks[global_rconfig.peer_count];
+    memset(socks, -1, sizeof(socks));
 
     if (strlen(buffer) < 6)
         snprintf(msg, sizeof(msg), "Usage: WRITE message\n");
-    else if ((message_number = bb_write(username, buffer + 6)) != -1) {
+
+    else if (!global_rconfig.peer_count)
+        message_number = bb_write(username, buffer + 6);
+
+    else {
+        char pmsg[5120];
+        snprintf(pmsg, sizeof(pmsg), "COM WRITE %ld %s %d %s\n", global_next_id, username, -1, msg);
+        if (replica_master_init(socks, pmsg) == 0)
+            message_number = bb_write(username, buffer + 6);
+    }
+
+    if (message_number != -1) {
         snprintf(msg, sizeof(msg), "3.0 WROTE %ld\n", message_number);
+        broadcast_to_peers(socks, "OK\n");
     } else {
         snprintf(msg, sizeof(msg), "3.2 ERROR WRITE failed to handle file\n");
+        broadcast_to_peers(socks, "NOK WRITE\n");
     }
+
+    close_socks(socks);
 
     write(client_fd, msg, strlen(msg));
 }
@@ -127,19 +145,39 @@ void replace_command(int client_fd, char *buffer, char *current_user)
 {
     char msg[2048];
 
-    if (strlen(buffer) < 8)
-        snprintf(msg, sizeof(msg), "Usage: REPLACE message-number/message\n");
-    else {
-        char *endptr;
-        long message_number = strtol(buffer + 8, &endptr, 10);
+    int socks[global_rconfig.peer_count];
+    memset(socks, -1, sizeof(socks));
 
-        int x = bb_replace(current_user, message_number, endptr + 1);
-        if (x == -1 || x == -3)
-            snprintf(msg, sizeof(msg), "4.2 ERROR REPLACE failed to handle file\n");
-        else if (x == -2)
-            snprintf(msg, sizeof(msg), "4.1 UNKNOWN %ld\n", message_number);
-        else
-            snprintf(msg, sizeof(msg), "4.0 REPLACED %ld\n", message_number);
+    if (strlen(buffer) < 8) {
+        snprintf(msg, sizeof(msg), "Usage: REPLACE message-number/message\n");
+        write(client_fd, msg, strlen(msg));
+        return;
     }
+
+    char *endptr;
+    long message_number = strtol(buffer + 8, &endptr, 10);
+    int status;
+
+    if (!global_rconfig.peer_count)
+        status = bb_replace(current_user, message_number, endptr + 1);
+    else {
+        char pmsg[5120];
+        snprintf(pmsg, sizeof(pmsg), "COM REPLACE %ld %s %ld %s\n", global_next_id, current_user,
+                 message_number, endptr + 1);
+
+        if (replica_master_init(socks, pmsg) == 0)
+            status = bb_replace(current_user, message_number, endptr + 1);
+    }
+
+    if (status == -1 || status == -3) {
+        snprintf(msg, sizeof(msg), "4.2 ERROR REPLACE failed to handle file\n");
+        broadcast_to_peers(socks, "NOK REPLACE\n");
+    } else if (status == -2)
+        snprintf(msg, sizeof(msg), "4.1 UNKNOWN %ld\n", message_number);
+    else
+        snprintf(msg, sizeof(msg), "4.0 REPLACED %ld\n", message_number);
+
+    close_socks(socks);
+
     write(client_fd, msg, strlen(msg));
 }
