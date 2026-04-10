@@ -159,3 +159,17 @@ int bb_replace(const char *username, const long message_number, const char *new_
     write_unlock();
     return 0;
 }
+
+long get_bbfile_offset()
+{
+    FILE *fp = fopen(global_config.bbfile, "r");
+    if (!fp)
+        return -1;
+
+    long file_offset;
+    fseek(fp, 0, SEEK_END);
+    file_offset = ftell(fp);
+    fclose(fp);
+
+    return file_offset;
+}
