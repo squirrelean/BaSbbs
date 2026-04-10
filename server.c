@@ -76,7 +76,6 @@ void *run_client(void *arg)
     while (!global_terminate_server && !global_restart_server) {
         pthread_mutex_lock(&mon.mutex);
         if (mon.idle_t_to_reap > 0 && !global_terminate_server) {
-            // mon.total_threads--;
             mon.idle_t_to_reap--;
             pthread_mutex_unlock(&mon.mutex);
             break;
