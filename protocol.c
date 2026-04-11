@@ -25,8 +25,10 @@ void handle_client(int client_fd)
 
     while (!global_restart_server && !global_terminate_server) {
         int bytes_read = read_line(client_fd, buffer, sizeof(buffer));
-        if (bytes_read <= 0)
+        if (bytes_read < 0)
             break;
+        else if (!bytes_read)
+            continue;
 
         if (!strncmp(buffer, "QUIT", 4)) {
             quit_command(client_fd);
