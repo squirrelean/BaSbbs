@@ -1,11 +1,16 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "bbfile.h"
 #include "globals.h"
+#include "lock.h"
 #include "tcp_utils.h"
 
 int connect_to_peers(struct sockaddr_in sin[], int socks[]);
@@ -53,40 +58,65 @@ void replica_slave_init(int peer_sd)
     char operation[32];
     char message[5120];
 
-    long write_offset = get_bbfile_offset();
+    BbMeta op_meta = {.backup = NULL};
 
-    while (read_line(peer_sd, buffer, sizeof(buffer)) > 0) {
-        if (!strncmp(buffer, "PRECOM SYN", 10))
-            send(peer_sd, "ACK\n", sizeof("ACK\n"), 0);
-
-        else if (!strncmp(buffer, "ABRT", 4) || !strncmp(buffer, "OK", 2))
+    while (!global_terminate_server && !global_restart_server) {
+        int bytes_read = read_line(peer_sd, buffer, sizeof(buffer));
+        if (bytes_read <= 0)
             break;
 
-        else if (!strncmp(buffer, "COM", 3)) {
+        if (!strncmp(buffer, "PRECOM SYN", 10)) {
+            send(peer_sd, "ACK\n", sizeof("ACK\n"), 0);
+            continue;
+        }
+
+        else if (!strncmp(buffer, "ABRT", 4))
+            break;
+
+        // Master begins commit phase
+        write_lock();
+
+        if (!strncmp(buffer, "COM", 3)) {
             sscanf(buffer, "COM %s %ld %64s %ld %4096[^\n]", operation, &next_id, username, &msg_num,
                    message);
 
             global_next_id = next_id;
 
-            int op_status = -1;
-            if (!strncmp(operation, "WRITE", 4))
-                op_status = bb_write(username, message);
+            if (!strncmp(operation, "WRITE", 4)) {
+                op_meta = bb_write(username, message);
+            }
 
             else if (!strncmp(operation, "REPLACE", 8) && msg_num > 0)
-                op_status = bb_replace(username, msg_num, message);
+                op_meta = bb_replace(username, msg_num, message);
 
-            if (op_status < 0)
+            if (op_meta.status < 0)
                 send(peer_sd, "NAK\n", sizeof("NAK\n"), 0);
             else
                 send(peer_sd, "ACK\n", sizeof("ACK\n"), 0);
+
+            // Get second protocol message from master.
+            bytes_read = read_line(peer_sd, buffer, sizeof(buffer));
+
+            if (bytes_read > 0 && !strncmp(buffer, "NOK WRITE", 9)) {
+                // Rollback write operation
+                bb_rollback(op_meta);
+            }
+
+            else if (bytes_read > 0 && !strncmp(buffer, "NOK REPLACE", 11)) {
+                // Rollback replace operation
+                bb_rollback(op_meta);
+            }
+
+            else if (!strncmp(buffer, "OK", 2))
+                delete_backup(op_meta);
         }
 
-        else if (!strncmp(buffer, "NOK", 3)) {
-            // truncate(global_config.bbfile, write_offset);
-            // decrement the bbfile id
-        }
+        write_unlock();
     }
+
     close(peer_sd);
+
+    free(op_meta.backup);
 }
 
 void *replica_listener(void *arg)
@@ -97,10 +127,29 @@ void *replica_listener(void *arg)
     int peer_sd;
     int peer_sock = create_listen_socket(global_rconfig.rport, 32);
 
+    // Makes the master socket non blocking on accept.
+    int flags = fcntl(peer_sock, F_GETFL, 0);
+    fcntl(peer_sock, F_SETFL, flags | O_NONBLOCK);
+
+    struct pollfd pol;
+
     while (!global_terminate_server && !global_restart_server) {
+        // Prevent master_sock from blocking on accept.
+        pol.fd = peer_sock;
+        pol.events = POLLIN;
+        int timeout = poll(&pol, 1, 2000);
+        if (timeout <= 0)
+            continue;
+
         peer_sd = accept(peer_sock, (struct sockaddr *)&peer_addr, &peer_addr_len);
-        if (peer_sd >= 0)
-            replica_slave_init(peer_sd);
+        if (peer_sd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            perror("replication: accept failure");
+            continue;
+        }
+
+        replica_slave_init(peer_sd);
     }
 
     return NULL;
