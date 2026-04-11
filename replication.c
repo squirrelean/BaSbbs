@@ -62,7 +62,7 @@ void replica_slave_init(int peer_sd)
 
     while (!global_terminate_server && !global_restart_server) {
         int bytes_read = read_line(peer_sd, buffer, sizeof(buffer));
-        if (bytes_read <= 0)
+        if (bytes_read < 0)
             break;
 
         if (!strncmp(buffer, "PRECOM SYN", 10)) {
