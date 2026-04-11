@@ -1,5 +1,6 @@
 #ifndef TCP_UTILS_H
 #define TCP_UTILS_H
+#include <netinet/in.h>
 #include <stddef.h>
 
 int create_listen_socket(int port, int backlog);
