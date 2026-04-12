@@ -59,7 +59,7 @@ int read_line(const int fd, char *buffer, const size_t maxlen)
 
         int timeout = poll(&pol, 1, 2000);
         if (timeout <= 0) {
-            continue;
+            return 0;
         }
 
         n = recv(fd, &ch, 1, 0);
