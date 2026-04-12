@@ -1,7 +1,3 @@
-#include "globals.h"
-#include "protocol.h"
-#include "read_config.h"
-#include "tcp_utils.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -11,8 +7,15 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#include "globals.h"
+#include "protocol.h"
+#include "read_config.h"
+#include "replication.h"
+#include "tcp_utils.h"
+
 void create_threads(int master_sock);
 void *monitor_thread();
+int launch_replica_listener();
 
 struct monitor_t {
     pthread_mutex_t mutex;
@@ -25,6 +28,9 @@ struct monitor_t mon = {PTHREAD_MUTEX_INITIALIZER, 0, 0, 0};
 
 void initialize_server()
 {
+    if (launch_replica_listener() < 0)
+        return;
+
     int master_sock = create_listen_socket(global_config.bbport, 32);
     if (master_sock == -1)
         return;
@@ -147,4 +153,19 @@ void create_threads(int master_sock)
         if (pthread_create(&t_id, &t_attr, run_client, (void *)(long)master_sock) == 0)
             mon.total_threads++;
     }
+}
+
+int launch_replica_listener()
+{
+    pthread_t replica_thread;
+    pthread_attr_t t_attr;
+    pthread_attr_init(&t_attr);
+    pthread_attr_setdetachstate(&t_attr, PTHREAD_CREATE_DETACHED);
+
+    if (pthread_create(&replica_thread, &t_attr, replica_listener, NULL) != 0) {
+        perror("server: failed to create replica listening thread");
+        return -1;
+    }
+
+    return 0;
 }
