@@ -198,6 +198,7 @@ void bb_rollback(BbMeta meta)
     if (!meta.backup && meta.file_offset >= 0) {
         truncate(global_config.bbfile, meta.file_offset);
         printf("WRITE operation has been rolled back\n");
+        global_next_id--;
     }
 
     // Rollback replace operation
