@@ -16,6 +16,7 @@ ReplicationConfig global_rconfig;
 void print_config();
 void free_allocated_memory();
 void set_config_defaults();
+void check_config_requirements();
 
 int main(int argc, char *argv[])
 {
@@ -35,10 +36,7 @@ int main(int argc, char *argv[])
         config_path = "bbserv.conf";
 
     read_config_file(&global_config, &global_rconfig, config_path);
-    if (!global_config.bbfile) {
-        printf("BBFILE required\n");
-        exit(EXIT_FAILURE);
-    }
+    check_config_requirements();
 
     if (!global_rconfig.fground) {
         if (daemonize() < 0) {
@@ -63,6 +61,7 @@ int main(int argc, char *argv[])
         global_restart_server = 0;
 
         read_config_file(&global_config, &global_rconfig, config_path);
+        check_config_requirements();
 
         print_config();
 
@@ -101,4 +100,17 @@ void set_config_defaults()
 {
     global_config = (ServerConfig){.thmax = 25, .thincr = 5, .bbport = 9000, .fdebug = false, .bbfile = NULL};
     global_rconfig = (ReplicationConfig){.fground = 0, .pdebug = 0, .rport = 9001, .peer = NULL};
+}
+
+void check_config_requirements()
+{
+    if (!global_config.bbfile) {
+        printf("BBFILE required\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (global_config.bbport == global_rconfig.rport) {
+        printf("bbport and rport must be different\n");
+        exit(EXIT_FAILURE);
+    }
 }
