@@ -101,16 +101,25 @@ void write_command(int client_fd, char *buffer, char *username)
 
     else {
         char pmsg[5120];
-        snprintf(pmsg, sizeof(pmsg), "COM WRITE %ld %s %d %s\n", global_next_id, username, -1, msg);
+        snprintf(pmsg, sizeof(pmsg), "COM WRITE %ld %s %d %s\n", global_next_id, username, -1, buffer + 6);
         if (replica_master_init(socks, pmsg) == 0)
             write_meta = bb_write(username, buffer + 6);
+        else
+            write_meta.status = -2;
     }
 
     if (write_meta.status != -1) {
         snprintf(msg, sizeof(msg), "3.0 WROTE %ld\n", write_meta.previous_id);
         broadcast_to_peers(socks, "OK\n");
-    } else {
-        snprintf(msg, sizeof(msg), "3.2 ERROR WRITE failed to handle file\n");
+    }
+
+    else if (write_meta.status == -2) {
+        snprintf(msg, sizeof(msg), "3.3 ERROR WRITE failed to synchronize with peers\n");
+        broadcast_to_peers(socks, "ABRT\n");
+    }
+
+    else {
+        snprintf(msg, sizeof(msg), "3.2 ERROR WRITE failed locally\n");
         broadcast_to_peers(socks, "NOK WRITE\n");
         bb_rollback(write_meta);
     }
@@ -120,6 +129,8 @@ void write_command(int client_fd, char *buffer, char *username)
     close_socks(socks);
 
     write(client_fd, msg, strlen(msg));
+    if (global_rconfig.pdebug)
+        printf("master-client WRITE: %s\n", msg);
 
     free(write_meta.backup);
 }
@@ -180,6 +191,8 @@ void replace_command(int client_fd, char *buffer, char *current_user)
 
         if (replica_master_init(socks, pmsg) == 0)
             r_meta = bb_replace(current_user, message_number, endptr + 1);
+        else
+            r_meta.status = -4;
     }
 
     if (r_meta.status == -1 || r_meta.status == -3) {
@@ -187,7 +200,11 @@ void replace_command(int client_fd, char *buffer, char *current_user)
         broadcast_to_peers(socks, "NOK REPLACE\n");
     } else if (r_meta.status == -2)
         snprintf(msg, sizeof(msg), "4.1 UNKNOWN %ld\n", message_number);
-    else {
+
+    else if (r_meta.status == -4) {
+        snprintf(msg, sizeof(msg), "4.3 ERROR REPLACE failed to synchronize with peers\n");
+        broadcast_to_peers(socks, "ABRT\n");
+    } else {
         snprintf(msg, sizeof(msg), "4.0 REPLACED %ld\n", message_number);
         broadcast_to_peers(socks, "OK\n");
         delete_backup(r_meta);
@@ -198,6 +215,8 @@ void replace_command(int client_fd, char *buffer, char *current_user)
     close_socks(socks);
 
     write(client_fd, msg, strlen(msg));
+    if (global_rconfig.pdebug)
+        printf("master-client REPLACE: %s\n", msg);
 
     free(r_meta.backup);
 }
