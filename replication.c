@@ -74,9 +74,9 @@ void replica_slave_init(int peer_sd)
             break;
 
         // Master begins commit phase
-        write_lock();
-
         if (!strncmp(buffer, "COM", 3)) {
+            write_lock();
+
             sscanf(buffer, "COM %s %ld %64s %ld %4096[^\n]", operation, &next_id, username, &msg_num,
                    message);
 
@@ -109,9 +109,9 @@ void replica_slave_init(int peer_sd)
 
             else if (!strncmp(buffer, "OK", 2))
                 delete_backup(op_meta);
-        }
 
-        write_unlock();
+            write_unlock();
+        }
     }
 
     close(peer_sd);
@@ -121,6 +121,8 @@ void replica_slave_init(int peer_sd)
 
 void *replica_listener(void *arg)
 {
+    (void)arg;
+
     struct sockaddr_in peer_addr;
     unsigned int peer_addr_len = sizeof(peer_addr);
 
@@ -152,6 +154,8 @@ void *replica_listener(void *arg)
         replica_slave_init(peer_sd);
     }
 
+    close(peer_sock);
+
     return NULL;
 }
 
@@ -172,6 +176,9 @@ int connect_to_peers(struct sockaddr_in sin[], int socks[])
 
 void broadcast_to_peers(const int sd[], const char *message)
 {
+    if (global_rconfig.pdebug)
+        printf("master broadcasting: %s\n", message);
+
     for (int i = 0; i < global_rconfig.peer_count; i++) {
         send(sd[i], message, strlen(message), 0);
     }
@@ -184,6 +191,9 @@ int await_response(const int sd[], const char *status)
         int bytes_read = read_line(sd[i], buffer, sizeof(buffer));
         if (bytes_read <= 0)
             return -1;
+
+        if (global_rconfig.pdebug)
+            printf("peer %d replied with: %s\n", i, buffer);
 
         if (strncmp(buffer, status, strlen(status)) != 0)
             return -1;
