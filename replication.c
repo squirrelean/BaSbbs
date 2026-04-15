@@ -14,7 +14,7 @@
 #include "tcp_utils.h"
 
 int connect_to_peers(struct sockaddr_in sin[], int socks[]);
-int phase_init(const int sd[], const char *bmsg, const char *pos_msg, const char *neg_msg);
+int phase_init(const int sd[], const char *bmsg, const char *pos_msg);
 void broadcast_to_peers(const int sd[], const char *message);
 int await_response(const int sd[], const char *status);
 void close_socks(int sd[]);
@@ -27,23 +27,24 @@ int replica_master_init(int socks[], const char *pcol_msg)
         return -1;
 
     // Precommit phase
-    if (phase_init(socks, "PRECOM SYN\n", "ACK\n", "ABRT\n") < 0) {
+    if (phase_init(socks, "PRECOM SYN\n", "ACK") < 0) {
+        printf("replication: precommit phase failed\n");
         return -1;
     }
 
     // Commit phase
-    if (phase_init(socks, pcol_msg, "ACK\n", "NAK\n") < 0) {
-        return -1;
+    if (phase_init(socks, pcol_msg, "ACK") < 0) {
+        printf("replication: commit phase failed\n");
+        return -2;
     }
 
     return 0;
 }
 
-int phase_init(const int sd[], const char *bmsg, const char *pos_msg, const char *neg_msg)
+int phase_init(const int sd[], const char *bmsg, const char *pos_msg)
 {
     broadcast_to_peers(sd, bmsg);
     if (await_response(sd, pos_msg) < 0) {
-        broadcast_to_peers(sd, neg_msg);
         return -1;
     }
     return 0;
@@ -58,15 +59,15 @@ void replica_slave_init(int peer_sd)
     char operation[32];
     char message[5120];
 
-    BbMeta op_meta = {.backup = NULL};
-
     while (!global_terminate_server && !global_restart_server) {
+        BbMeta op_meta = {.backup = NULL, .file_offset = -1, .status = -1};
+
         int bytes_read = read_line(peer_sd, buffer, sizeof(buffer));
-        if (bytes_read < 0)
+        if (bytes_read <= 0)
             break;
 
         if (!strncmp(buffer, "PRECOM SYN", 10)) {
-            send(peer_sd, "ACK\n", sizeof("ACK\n"), 0);
+            send(peer_sd, "ACK\n", strlen("ACK\n"), 0);
             continue;
         }
 
@@ -77,25 +78,29 @@ void replica_slave_init(int peer_sd)
         if (!strncmp(buffer, "COM", 3)) {
             write_lock();
 
-            sscanf(buffer, "COM %s %ld %64s %ld %4096[^\n]", operation, &next_id, username, &msg_num,
+            sscanf(buffer, "COM %[^|]|%ld|%[^|]|%ld|%[^\n]", operation, &next_id, username, &msg_num,
                    message);
 
             global_next_id = next_id;
 
             if (!strncmp(operation, "WRITE", 4)) {
                 op_meta = bb_write(username, message);
+                printf("replication slave: performed write operation. status code: %d\n", op_meta.status);
             }
 
             else if (!strncmp(operation, "REPLACE", 8) && msg_num > 0)
                 op_meta = bb_replace(username, msg_num, message);
 
+            printf("operation: %s, msg_num: %ld, msg: %s\n", operation, msg_num, message);
+
             if (op_meta.status < 0)
-                send(peer_sd, "NAK\n", sizeof("NAK\n"), 0);
+                send(peer_sd, "NAK\n", strlen("NAK\n"), 0);
             else
-                send(peer_sd, "ACK\n", sizeof("ACK\n"), 0);
+                send(peer_sd, "ACK\n", strlen("ACK\n"), 0);
 
             // Get second protocol message from master.
             bytes_read = read_line(peer_sd, buffer, sizeof(buffer));
+            printf("slave recieved message: %s\n", buffer);
 
             if (bytes_read > 0 && !strncmp(buffer, "NOK WRITE", 9)) {
                 // Rollback write operation
@@ -112,11 +117,11 @@ void replica_slave_init(int peer_sd)
 
             write_unlock();
         }
+
+        free(op_meta.backup);
     }
 
     close(peer_sd);
-
-    free(op_meta.backup);
 }
 
 void *replica_listener(void *arg)
@@ -195,8 +200,10 @@ int await_response(const int sd[], const char *status)
         if (global_rconfig.pdebug)
             printf("peer %d replied with: %s\n", i, buffer);
 
-        if (strncmp(buffer, status, strlen(status)) != 0)
+        if (strncmp(buffer, status, strlen(status)) != 0) {
+            printf("replication: %s is not equal to %s\n", buffer, status);
             return -1;
+        }
     }
 
     return 0;
