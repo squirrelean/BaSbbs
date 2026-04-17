@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "bbfile.h"
 #include "server.h"
@@ -15,8 +16,8 @@ ReplicationConfig global_rconfig;
 
 void print_config();
 void free_allocated_memory();
-void set_config_defaults();
-void check_config_requirements();
+void configure_server(char *config_path);
+char *resolve_path(char *path);
 
 int main(int argc, char *argv[])
 {
@@ -27,29 +28,29 @@ int main(int argc, char *argv[])
 
     initialize_signals();
 
-    set_config_defaults();
-
-    char *config_path;
+    char *config_path = NULL;
     if (argc == 2)
-        config_path = argv[1];
+        config_path = strdup(argv[1]);
     else
-        config_path = "bbserv.conf";
+        config_path = resolve_path("bbserv.conf");
 
-    read_config_file(&global_config, &global_rconfig, config_path);
-    check_config_requirements();
+    configure_server(config_path);
 
+    const char *pidfile = "bbserv.pid_file";
+    int pidfd;
+    char *absolute_bbfile;
     if (!global_rconfig.fground) {
+        printf("Server running daemonized\n");
+
+        absolute_bbfile = resolve_path(global_config.bbfile);
+        free(global_config.bbfile);
+        global_config.bbfile = absolute_bbfile;
+
         if (daemonize() < 0) {
             free_allocated_memory();
             exit(EXIT_FAILURE);
         }
 
-        printf("Server running daemonized\n");
-    }
-
-    const char *pidfile = "bbserv.pid_file";
-    int pidfd;
-    if (!global_rconfig.fground) {
         pidfd = create_pid_file(pidfile);
         if (pidfd < 0) {
             free_allocated_memory();
@@ -60,22 +61,21 @@ int main(int argc, char *argv[])
     while (!global_terminate_server) {
         global_restart_server = 0;
 
-        read_config_file(&global_config, &global_rconfig, config_path);
-        check_config_requirements();
-
-        print_config();
-
-        bb_init();
-
         initialize_server();
         if (global_restart_server)
             printf("SIGHUP signal handled. reconfiguring server\n\n");
+
+        configure_server(config_path);
     }
 
     if (!global_rconfig.fground)
         release_pid_file(pidfile, pidfd);
 
     printf("termination signal handled. terminating server\n");
+
+    free(config_path);
+
+    return 0;
 }
 
 void print_config()
@@ -96,14 +96,13 @@ void free_allocated_memory()
     free_peers(global_rconfig.peer, global_rconfig.peer_count);
 }
 
-void set_config_defaults()
+void configure_server(char *config_path)
 {
     global_config = (ServerConfig){.thmax = 25, .thincr = 5, .bbport = 9000, .fdebug = false, .bbfile = NULL};
     global_rconfig = (ReplicationConfig){.fground = 0, .pdebug = 0, .rport = 9001, .peer = NULL};
-}
 
-void check_config_requirements()
-{
+    read_config_file(&global_config, &global_rconfig, config_path);
+
     if (!global_config.bbfile) {
         printf("BBFILE required\n");
         exit(EXIT_FAILURE);
@@ -113,4 +112,19 @@ void check_config_requirements()
         printf("bbport and rport must be different\n");
         exit(EXIT_FAILURE);
     }
+
+    print_config();
+
+    bb_init();
+}
+
+char *resolve_path(char *path)
+{
+    char absolute_path[256];
+    if (!realpath(path, absolute_path)) {
+        perror("Failed to resolve relative path as absolute");
+        exit(EXIT_FAILURE);
+    }
+
+    return strdup(absolute_path);
 }
