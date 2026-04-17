@@ -35,8 +35,6 @@ int bb_init()
 
 BbMeta bb_write(const char *poster, const char *message)
 {
-    // write_lock();
-
     BbMeta meta = {
         .file_offset = get_bbfile_offset(), .backup = NULL, .previous_id = global_next_id, .status = 0};
 
@@ -60,8 +58,6 @@ BbMeta bb_write(const char *poster, const char *message)
 
     if (global_config.fdebug)
         printf("Write debug End\n");
-
-    // write_unlock();
 
     return meta;
 }
@@ -108,8 +104,6 @@ int bb_read(const long message_number, char **message)
 
 BbMeta bb_replace(const char *username, const long message_number, const char *new_message)
 {
-    // write_lock();
-
     BbMeta meta = {.file_offset = -1, .previous_id = global_next_id, .status = 0};
 
     if (global_config.fdebug) {
@@ -120,7 +114,6 @@ BbMeta bb_replace(const char *username, const long message_number, const char *n
     FILE *og_fp = fopen(global_config.bbfile, "r");
     if (!og_fp) {
         meta.status = -1;
-        // write_unlock();
         return meta;
     }
 
@@ -131,7 +124,6 @@ BbMeta bb_replace(const char *username, const long message_number, const char *n
     if (!temp_fp) {
         fclose(og_fp);
         meta.status = -1;
-        // write_unlock();
         return meta;
     }
 
@@ -164,17 +156,14 @@ BbMeta bb_replace(const char *username, const long message_number, const char *n
             perror("bb_replace: file rename failed");
             remove(temp_filename);
             meta.status = -3;
-            // write_unlock();
             return meta;
         }
     } else {
         remove(temp_filename);
         meta.status = -2;
-        // write_unlock();
         return meta;
     }
 
-    // write_unlock();
     return meta;
 }
 
