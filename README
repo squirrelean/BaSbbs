@@ -1,1 +1,121 @@
 
+
+-- Startup --
+When the FOREGROUND flag is set to 0 or false, the server prints a few indicator messages to the terminal, then correctly detaches from the terminal, 
+closes all file descriptors. Messages are sent to a file called bbserv.log, which resides in the run/ subdirectory. The tests below were performed with 
+PDEBUG enabled.
+
+Testing WRITE command using <WRITE Hello, World>:
+- Client receives "3.0 WROTE 1",
+- bbserv.log contains message "master-client: 3.0 WROTE 1",
+- bbfile contains message "1/Dennis/Hello, World"
+
+Testing REPLACE command using <REPLACE 1 Replace, World>:
+- Client receives "4.0 REPLACED 1",
+- bbserv.log contains "master-client: 4.0 REPLACED 1",
+- bbfile contains "1/Dennis/Replace, World".
+
+Testing <QUIT>:
+- Client receives "9.0 BYE Goodbye".
+
+Testing PID locking:
+- One instance of the server is launched from a terminal window and its process id was recorded as 9465. Three other instance of the server were then launched but 
+  only process id 9465 was shown. bbserv.log contained the following messages from the test:
+  - daemonize: cannot lock pid file: Resource temporarily unavailable
+  - daemonize: cannot lock pid file: Resource temporarily unavailable
+  - daemonize: cannot lock pid file: Resource temporarily unavailable
+- bbserv.pid_file, the file responsible for storing the PID of the currently running server contained the process id 9465.
+
+
+-- Dynamic Reconfiguration --
+Dynamic Reconfiguration was tested with the FOREGROUND flag set to true.
+
+Testing SIGHUP Reconfiguration:
+- Before Reconfiguration:
+  - Configuration is printed "thmax: 5, thincr: 3, bbport: 8000, fdebug: 0, bbfile: bbfile forground: 1, pdebug: 1, rport: 9000".
+  - A total of 5 threads are counted. This is correct as the server spawns thincr threads alongside the main process thread and the replication listener thread.
+    
+- Reconfiguration:
+  - THMAX, THINCR, BBPORT, and RPORT are then set to 10, 6, 9000, 9050, respectively. The server is then sent a SIGHUP signal using <kill -HUP pid>.
+  - The server prints out "SIGHUP signal handled. reconfiguring server".
+  - The server prints out "thmax: 10, thincr: 6, bbport: 9000, fdebug: 0, bbfile: bbfile forground: 1, pdebug: 1, rport: 9050".
+  - A total of 8 threads are counted. This is correct (thincr + main + replication listener).
+
+Client Functionality:
+- <telnet localhost 8000> fails to connect to the server.
+- <telnet localhost 9000> successfully connects to the server and can perform the same READ, WRITE, REPLACE, and QUIT operations.
+
+Testing SIGINT:
+- Entering CTRL+C in the terminal causes the server terminate after a two second wait for all clients to timeout.
+
+-- Replication Algorithm --
+For the tests below, the master (serverA) was assigned BBPORT 8000, RPORT 9000, PEER localhost:9001, BBFILE bbfileA. The slave (serverB) 
+was given BBPORT 8001, RPORT 9001, PEER localhost 9000, BBFILE bbfileB. The client connects to the master server using telnet localhost 8000.
+PDEBUG was enabled for the tests to validate communication. The three server config files used for testing are provided in the root directory.
+
+Testing WRITE command using WRITE Hello, Write:
+- Messages Exchanged:
+  - Master broadcasts "PRECOM SYN", 
+  - Peer responds with "ACK", 
+  - Master broadcasts "COM WRITE|1|Alice|-1|Hello, Write".
+  - Peer responds with "ACK",
+  - Master broadcasts "OK".
+  - Master sends "3.0 WROTE 1" to client.
+
+- BBFILES:
+  - bbfileA is appended with the string provided by the client.
+  - bbfileB is appended with the string provided by the client.
+  - bbfileA and bbfileB contain the same contents.
+
+
+Testing REPLACE command using REPLACE 1 Hello, Replace:
+- Messages Exchanged:
+  - Master broadcasts "PRECOM SYN",
+  - Peer responds with "ACK",
+  - Master broadcasts "COM REPLACE|2|Alice|1|Hello, Replace",
+  - Peer responds with "ACK",
+  - Master broadcasts "OK".
+  - Master sends client "4.0 REPLACED 1".
+
+- BBFILES:
+  - bbfileA message 1 "Hello, Write" is replaced with "Hello, Replace".
+  - bbfileB message 1 "Hello, Write" is replaced with "Hello, Replace".
+
+
+Testing invalid REPLACE command using REPLACE 100 Hello, Fail:
+- Messages Exchanged:
+  - Master broadcasts "PRECOM SYN",
+  - Peer responds with "ACK",
+  - Master broadcasts "COM REPLACE|2|Alice|100|Hello, Fail",
+  - Peer responds with "NAK",
+  - Master broadcasts "NOK REPLACE",
+  - Master sends client "4.1 ERROR REPLACE COMMIT phase failed".
+   
+- BBFILES:
+  - No modifications were made to the bbfiles.
+
+
+To test rollback functionality, I added a new serverC.conf file with RPORT 9002, PEER localhost:9000 and added localhost:9002 to the master server PEER
+list. serverC's bbfile was manually modified so that a REPLACE operation from the client would fail on its side but succeed on the other slaves side. 
+The replace command used in this test case was REPLACE 2 Hello, Rollback.
+
+- Messages Exchanged:
+  - Master broadcasts "PRECOM SYN",
+  - Peer 0 responds with "ACK",
+  - Peer 1 responds with "ACK",
+  - Master broadcasts "COM REPLACE|3|anonymous coward|2|Hello, Rollback",
+  - Peer 0 responds with "ACK",
+  - Peer 1 responds with "NAK",
+  - Master broadcasts "NOK REPLACE",
+  - Master sends client "4.1 ERROR REPLACE COMMIT phase failed".
+
+- BBFILES:
+  - ServerB, the peer that successfully replaced its "Hello, Rollback" message to the previous message.
+
+
+
+
+
+
+
+
