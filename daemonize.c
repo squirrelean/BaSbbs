@@ -27,12 +27,10 @@ int daemonize()
         perror("daemonize: ioctl failed to detach from tty");
     close(ttyfd);
 
-    if (mkdir("run", 0755) < 0)
-        perror("daemonize: failed to create run directory");
-    if (chdir("run") < 0)
-        perror("daemonize: failed to change to safe directory");
+    mkdir("run", 0755);
+    chdir("run");
 
-    umask(0);
+    umask(0022);
 
     // Close all descriptors
     for (int i = 0; i < getdtablesize(); i++)
@@ -46,7 +44,7 @@ int daemonize()
     }
 
     // Redirect stdout and stderr to log file
-    int logfd = open("bbserv.log", O_WRONLY | O_CREAT | O_APPEND);
+    int logfd = open("bbserv.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (logfd != 1) {
         dup2(logfd, 1);
         close(logfd);
