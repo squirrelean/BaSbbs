@@ -125,8 +125,10 @@ void write_command(int client_fd, char *buffer, char *username)
         write_unlock();
     }
 
-    if (replica_status == -1 || write_meta.status < 0)
+    if (replica_status == -1 || write_meta.status < 0) {
         snprintf(msg, sizeof(msg), "3.3 ERROR WRITE failure during PRECOMMIT phase\n");
+        broadcast_to_peers(socks, "ABRT\n");
+    }
 
     // Broadcast unsuccessful message to peers if master failed write or any peer sent NAK.
     if (replica_status == -2 || write_meta.status < 0) {
