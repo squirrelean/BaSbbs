@@ -34,7 +34,7 @@ Testing SIGHUP Reconfiguration:
 - Before Reconfiguration:
   - Configuration is printed "thmax: 5, thincr: 3, bbport: 8000, fdebug: 0, bbfile: bbfile forground: 1, pdebug: 1, rport: 9000".
   - A total of 5 threads are counted. This is correct as the server spawns thincr threads alongside the main process thread and the replication listener thread.
-    
+
 - Reconfiguration:
   - THMAX, THINCR, BBPORT, and RPORT are then set to 10, 6, 9000, 9050, respectively. The server is then sent a SIGHUP signal using <kill -HUP pid>.
   - The server prints out "SIGHUP signal handled. reconfiguring server".
@@ -94,7 +94,7 @@ Testing invalid REPLACE command using REPLACE 100 Hello, Fail:
 - BBFILES:
   - No modifications were made to the bbfiles.
 
-
+Testing rollback functionality:
 To test rollback functionality, I added a new serverC.conf file with RPORT 9002, PEER localhost:9000 and added localhost:9002 to the master server PEER
 list. serverC's bbfile was manually modified so that a REPLACE operation from the client would fail on its side but succeed on the other slaves side. 
 The replace command used in this test case was REPLACE 2 Hello, Rollback.
@@ -112,7 +112,9 @@ The replace command used in this test case was REPLACE 2 Hello, Rollback.
 - BBFILES:
   - ServerB, the peer that successfully replaced its "Hello, Rollback" message to the previous message.
 
-
+Testing unready peer:
+- To ensure that the precommit phase fails if a peer is unavailable, the server was launched with two peers and one was terminated. Upon sending a WRITE operation 
+from the client, the message "master broadcasting: ABRT" was broadcast and the client received "3.3 ERROR WRITE failure during PRECOMMIT phase".
 
 
 
