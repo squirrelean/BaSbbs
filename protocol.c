@@ -5,6 +5,8 @@
 
 #include "bbfile.h"
 #include "globals.h"
+#include "lock.h"
+#include "replication.h"
 #include "tcp_utils.h"
 
 void send_welcome_msg(int client_fd);
@@ -13,6 +15,7 @@ void user_command(int client_fd, char *buffer, char *username, int user_len);
 void write_command(int client_fd, char *buffer, char *username);
 void read_command(int client_fd, char *buffer);
 void replace_command(int client_fd, char *buffer, char *current_user);
+void write_to_client(int client_fd, char *msg);
 
 void handle_client(int client_fd)
 {
@@ -23,8 +26,10 @@ void handle_client(int client_fd)
 
     while (!global_restart_server && !global_terminate_server) {
         int bytes_read = read_line(client_fd, buffer, sizeof(buffer));
-        if (bytes_read <= 0)
+        if (bytes_read < 0)
             break;
+        else if (!bytes_read)
+            continue;
 
         if (!strncmp(buffer, "QUIT", 4)) {
             quit_command(client_fd);
@@ -82,17 +87,65 @@ void user_command(int client_fd, char *buffer, char *username, int user_len)
 void write_command(int client_fd, char *buffer, char *username)
 {
     char msg[1024];
-    long message_number;
+    BbMeta write_meta = {.backup = NULL, .status = -1};
 
-    if (strlen(buffer) < 6)
+    if (strlen(buffer) < 6) {
         snprintf(msg, sizeof(msg), "Usage: WRITE message\n");
-    else if ((message_number = bb_write(username, buffer + 6)) != -1) {
-        snprintf(msg, sizeof(msg), "3.0 WROTE %ld\n", message_number);
-    } else {
-        snprintf(msg, sizeof(msg), "3.2 ERROR WRITE failed to handle file\n");
+        write_to_client(client_fd, msg);
+        return;
     }
 
-    write(client_fd, msg, strlen(msg));
+    if (!global_rconfig.peer_count) {
+        write_lock();
+
+        write_meta = bb_write(username, buffer + 6);
+
+        if (write_meta.status == 0)
+            snprintf(msg, sizeof(msg), "3.0 WROTE %ld\n", write_meta.previous_id);
+        else
+            snprintf(msg, sizeof(msg), "3.3 ERROR WRITE failed to handle file\n");
+
+        write_unlock();
+
+        write_to_client(client_fd, msg);
+        return;
+    }
+
+    int socks[global_rconfig.peer_count];
+    memset(socks, -1, sizeof(socks));
+
+    int replica_status;
+
+    char pmsg[5120];
+    snprintf(pmsg, sizeof(pmsg), "COM %s|%ld|%s|%d|%s\n", "WRITE", global_next_id, username, -1, buffer + 6);
+
+    if ((replica_status = replica_master_init(socks, pmsg)) == 0) {
+        write_lock();
+        write_meta = bb_write(username, buffer + 6);
+        write_unlock();
+    }
+
+    if (replica_status == -1 || write_meta.status < 0) {
+        snprintf(msg, sizeof(msg), "3.3 ERROR WRITE failure during PRECOMMIT phase\n");
+        broadcast_to_peers(socks, "ABRT\n");
+    }
+
+    // Broadcast unsuccessful message to peers if master failed write or any peer sent NAK.
+    if (replica_status == -2 || write_meta.status < 0) {
+        broadcast_to_peers(socks, "NOK WRITE\n");
+    }
+
+    // Broadcast successful message to peers
+    else if (write_meta.status == 0 && replica_status == 0) {
+        snprintf(msg, sizeof(msg), "3.0 WROTE %ld\n", write_meta.previous_id);
+        broadcast_to_peers(socks, "OK\n");
+    }
+
+    close_socks(socks);
+
+    write_to_client(client_fd, msg);
+
+    free(write_meta.backup);
 }
 
 void read_command(int client_fd, char *buffer)
@@ -127,19 +180,86 @@ void replace_command(int client_fd, char *buffer, char *current_user)
 {
     char msg[2048];
 
-    if (strlen(buffer) < 8)
+    if (strlen(buffer) < 8) {
         snprintf(msg, sizeof(msg), "Usage: REPLACE message-number/message\n");
-    else {
-        char *endptr;
-        long message_number = strtol(buffer + 8, &endptr, 10);
-
-        int x = bb_replace(current_user, message_number, endptr + 1);
-        if (x == -1 || x == -3)
-            snprintf(msg, sizeof(msg), "4.2 ERROR REPLACE failed to handle file\n");
-        else if (x == -2)
-            snprintf(msg, sizeof(msg), "4.1 UNKNOWN %ld\n", message_number);
-        else
-            snprintf(msg, sizeof(msg), "4.0 REPLACED %ld\n", message_number);
+        write(client_fd, msg, strlen(msg));
+        return;
     }
+
+    char *endptr;
+    long message_number = strtol(buffer + 8, &endptr, 10);
+    BbMeta r_meta = {.backup = NULL, .status = -10};
+
+    int replica_status = -10;
+
+    if (!global_rconfig.peer_count) {
+        write_lock();
+        r_meta = bb_replace(current_user, message_number, endptr + 1);
+        write_unlock();
+
+        if (r_meta.status == 0) {
+            snprintf(msg, sizeof(msg), "4.0 REPLACED %ld\n", message_number);
+            delete_backup(r_meta);
+        }
+
+        else if (r_meta.status == -1)
+            snprintf(msg, sizeof(msg), "4.2 ERROR REPLACE failed to handle file\n");
+
+        else if (r_meta.status == -2)
+            snprintf(msg, sizeof(msg), "4.1 UNKNOWN %ld\n", message_number);
+
+        write_to_client(client_fd, msg);
+        free(r_meta.backup);
+        return;
+    }
+
+    int socks[global_rconfig.peer_count];
+    memset(socks, -1, sizeof(socks));
+
+    char pmsg[5120];
+
+    snprintf(pmsg, sizeof(pmsg), "COM %s|%ld|%s|%ld|%s\n", "REPLACE", global_next_id, current_user,
+             message_number, endptr + 1);
+
+    if ((replica_status = replica_master_init(socks, pmsg)) == 0) {
+        write_lock();
+        r_meta = bb_replace(current_user, message_number, endptr + 1);
+        write_unlock();
+    }
+
+    if (r_meta.status == 0) {
+        snprintf(msg, sizeof(msg), "4.0 REPLACED %ld\n", message_number);
+        broadcast_to_peers(socks, "OK\n");
+        delete_backup(r_meta);
+    }
+
+    else if (replica_status == -1) {
+        snprintf(msg, sizeof(msg), "4.3 ERROR REPLACE failed to synchronize with peers\n");
+        broadcast_to_peers(socks, "ABRT\n");
+    }
+
+    else {
+        if (replica_status == -2)
+            snprintf(msg, sizeof(msg), "4.1 ERROR REPLACE COMMIT phase failed\n");
+
+        else if (r_meta.status == -1)
+            snprintf(msg, sizeof(msg), "4.2 ERROR REPLACE failed to handle file\n");
+        else if (r_meta.status == -2)
+            snprintf(msg, sizeof(msg), "4.1 UNKNOWN %ld\n", message_number);
+
+        broadcast_to_peers(socks, "NOK REPLACE\n");
+    }
+
+    close_socks(socks);
+
+    write_to_client(client_fd, msg);
+
+    free(r_meta.backup);
+}
+
+void write_to_client(int client_fd, char *msg)
+{
     write(client_fd, msg, strlen(msg));
+    if (global_rconfig.pdebug)
+        printf("master-client: %s\n", msg);
 }

@@ -1,3 +1,4 @@
+#include "bbfile.h"
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -6,6 +7,8 @@
 #include "lock.h"
 
 long global_next_id = 0;
+
+long get_bbfile_offset();
 
 int bb_init()
 {
@@ -30,9 +33,10 @@ int bb_init()
     return 0;
 }
 
-int bb_write(const char *poster, const char *message)
+BbMeta bb_write(const char *poster, const char *message)
 {
-    write_lock();
+    BbMeta meta = {
+        .file_offset = get_bbfile_offset(), .backup = NULL, .previous_id = global_next_id, .status = 0};
 
     if (global_config.fdebug) {
         printf("Write debug 6s sleep\n");
@@ -41,8 +45,9 @@ int bb_write(const char *poster, const char *message)
 
     FILE *fp = fopen(global_config.bbfile, "a");
     if (!fp) {
-        write_unlock();
-        return -1;
+        meta.status = -1;
+        // write_unlock();
+        return meta;
     }
 
     fprintf(fp, "%ld/%s/%s\n", global_next_id, poster, message);
@@ -54,9 +59,7 @@ int bb_write(const char *poster, const char *message)
     if (global_config.fdebug)
         printf("Write debug End\n");
 
-    write_unlock();
-
-    return global_next_id - 1;
+    return meta;
 }
 
 int bb_read(const long message_number, char **message)
@@ -73,8 +76,6 @@ int bb_read(const long message_number, char **message)
         read_unlock();
         return -1;
     }
-
-    *message = NULL;
 
     char line[1024];
     while (fgets(line, sizeof(line), fp)) {
@@ -101,9 +102,9 @@ int bb_read(const long message_number, char **message)
     return 0;
 }
 
-int bb_replace(const char *username, const long message_number, const char *new_message)
+BbMeta bb_replace(const char *username, const long message_number, const char *new_message)
 {
-    write_lock();
+    BbMeta meta = {.file_offset = -1, .previous_id = global_next_id, .status = 0};
 
     if (global_config.fdebug) {
         printf("Replace debug 6s sleep\n");
@@ -112,17 +113,18 @@ int bb_replace(const char *username, const long message_number, const char *new_
 
     FILE *og_fp = fopen(global_config.bbfile, "r");
     if (!og_fp) {
-        write_unlock();
-        return -1;
+        meta.status = -1;
+        return meta;
     }
 
     char temp_filename[strlen(global_config.bbfile) + 8];
     snprintf(temp_filename, sizeof(temp_filename), "%s_tmp", global_config.bbfile);
+
     FILE *temp_fp = fopen(temp_filename, "w");
     if (!temp_fp) {
         fclose(og_fp);
-        write_unlock();
-        return -1;
+        meta.status = -1;
+        return meta;
     }
 
     char line[1024];
@@ -144,18 +146,60 @@ int bb_replace(const char *username, const long message_number, const char *new_
         printf("Replace debug end\n");
 
     if (found_message) {
+        // backup the current bbfile
+        char backup_filename[strlen(global_config.bbfile) + 8];
+        snprintf(backup_filename, sizeof(backup_filename), "%s.bak", global_config.bbfile);
+        rename(global_config.bbfile, backup_filename);
+        meta.backup = strdup(backup_filename);
+
         if (rename(temp_filename, global_config.bbfile) != 0) {
             perror("bb_replace: file rename failed");
             remove(temp_filename);
-            write_unlock();
-            return -3;
+            meta.status = -3;
+            return meta;
         }
     } else {
         remove(temp_filename);
-        write_unlock();
-        return -2;
+        meta.status = -2;
+        return meta;
     }
 
-    write_unlock();
-    return 0;
+    return meta;
+}
+
+long get_bbfile_offset()
+{
+    FILE *fp = fopen(global_config.bbfile, "r");
+    if (!fp)
+        return -1;
+
+    long file_offset;
+    fseek(fp, 0, SEEK_END);
+    file_offset = ftell(fp);
+    fclose(fp);
+
+    return file_offset;
+}
+
+void bb_rollback(BbMeta meta)
+{
+    // Rollback write operation
+    if (!meta.backup && meta.file_offset >= 0) {
+        truncate(global_config.bbfile, meta.file_offset);
+        printf("WRITE operation has been rolled back\n");
+        global_next_id--;
+    }
+
+    // Rollback replace operation
+    else if (meta.backup) {
+        rename(meta.backup, global_config.bbfile);
+        printf("REPLACE operation has been rolled back\n");
+    }
+}
+
+void delete_backup(BbMeta meta)
+{
+    if (meta.backup) {
+        remove(meta.backup);
+    }
 }

@@ -1,0 +1,47 @@
+Replication Application Protocol
+
+
+-- Precommit Phase --
+
+PRECOM SYN:
+- Upon receiving a command from a client, the master server will broadcast the message "PRECOM SYN" to all peers specified in its configuration file to initiate the 
+  precommit phase. The master will then wait for a response from the peers.
+
+ACK:
+- A peer receiving a PRECOM SYN message will send back an "ACK" message to indicate the successful establishment of the master to peer connection.
+
+ABRT:
+- If the master does not receive an ACK response from a peer in a window of two seconds, it will assume a failure has occurred, broadcasting the message 
+  "ABRT" to all of its peers.
+- When a peer receives the ABRT message, it will cease all further operations, close its connection, and revert back to listening for new masters.
+
+
+-- Commit Phase --
+
+COM <WRITE/REPLACE> <next message id> <username> <replace message id> <message>
+- The master broadcasts a commit message containing all necessary data for the WRITE and REPLACE to all of its peers.
+- During a WRITE operation, the <replace message id> is set to a sentinel value of -1 since the value is only require for REPLACE.
+- To ensure all peers WRITE the correct message, the masters message id variable is passed to the peer and used for its local WRITE operation.
+- Upon receiving this COM message, each peer will attempt to perform the provided operation on their local bbfile.
+
+ACK:
+- If the peer is successful in performing the operation provided by the master's COM message, it will send the message "ACK" to indicate the master of its success.
+- The master will wait for all peers to reply with their operation status. If all peers sent "ACK", the master will then perform the requested operation locally.
+
+NAK:
+- If the peer is unsuccessful in performing the operation locally, it will send back a "NAK" message to inform the master of its failure.
+- If the master does not hear back from a peer in the two second timeout, it automatically assumes NAK.
+
+OK:
+- If the master was successful in performing the local operation, it will broadcast "OK" to all of its peers to indicate that the entire phase was a success and 
+  they require no further action.
+
+NOK WRITE:
+- If a WRITE operation was requested and a NAK is determined, the master will broadcast the message "NOK WRITE" to all peers, informing them that they must roll back 
+  their previous WRITE operation.
+- Upon receiving a NOK WRITE, the peer will immediately roll back the WRITE operation it just performed.
+
+NOK REPLACE:
+- If a REPLACE operation was requested and a NAK is determined, the master will broadcast the message "NOK REPLACE" to all peers, informing them that they must roll back 
+  their previous REPLACE operation.
+- Upon receiving a NOK REPLACE, the peer will immediately roll back the REPLACE operation it performed.
