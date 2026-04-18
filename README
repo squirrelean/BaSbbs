@@ -1,4 +1,12 @@
+Daniel James A. Carone
+DANASTASIO25@ubishops.ca, danastasio02@icloud.com
+002-36-3171
 
+
+-- Description --
+The provided program builds on top of the bulletin board server from the previous assignment by implementing a daemon process similar to the one specified in the 
+lecture handouts, dynamic reconfiguration to allow SIGHUP signals to reparse the configuration file, and a two phase commit algorithm specified in the provided 
+replproto.txt file.
 
 -- Startup --
 When the FOREGROUND flag is set to 0 or false, the server prints a few indicator messages to the terminal, then correctly detaches from the terminal, 
@@ -49,9 +57,9 @@ Testing SIGINT:
 - Entering CTRL+C in the terminal causes the server terminate after a two second wait for all clients to timeout.
 
 -- Replication Algorithm --
-For the tests below, the master (serverA) was assigned BBPORT 8000, RPORT 9000, PEER localhost:9001, BBFILE bbfileA. The slave (serverB) 
+For the tests below, the master was assigned BBPORT 8000, RPORT 9000, PEER localhost:9001, BBFILE bbfileA. The peer
 was given BBPORT 8001, RPORT 9001, PEER localhost 9000, BBFILE bbfileB. The client connects to the master server using telnet localhost 8000.
-PDEBUG was enabled for the tests to validate communication. The three server config files used for testing are provided in the root directory.
+PDEBUG was enabled for the tests to validate communication.
 
 Testing WRITE command using WRITE Hello, Write:
 - Messages Exchanged:
@@ -95,8 +103,8 @@ Testing invalid REPLACE command using REPLACE 100 Hello, Fail:
   - No modifications were made to the bbfiles.
 
 Testing rollback functionality:
-To test rollback functionality, I added a new serverC.conf file with RPORT 9002, PEER localhost:9000 and added localhost:9002 to the master server PEER
-list. serverC's bbfile was manually modified so that a REPLACE operation from the client would fail on its side but succeed on the other slaves side. 
+To test rollback functionality, I added a new peer with RPORT 9002, PEER localhost:9000 and added localhost:9002 to the master server PEER
+list. This peer's bbfile was manually modified so that a REPLACE operation from the client would fail on its side but succeed on the other slaves side. 
 The replace command used in this test case was REPLACE 2 Hello, Rollback.
 
 - Messages Exchanged:
@@ -114,7 +122,7 @@ The replace command used in this test case was REPLACE 2 Hello, Rollback.
 
 Testing unready peer:
 - To ensure that the precommit phase fails if a peer is unavailable, the server was launched with two peers and one was terminated. Upon sending a WRITE operation 
-from the client, the message "master broadcasting: ABRT" was broadcast and the client received "3.3 ERROR WRITE failure during PRECOMMIT phase".
+  from the client, the message "master broadcasting: ABRT" was broadcast and the client received "3.3 ERROR WRITE failure during PRECOMMIT phase".
 
 
 
